@@ -1,0 +1,87 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: banquet-crm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: banquet
+      POSTGRES_PASSWORD: banquet_secret
+      POSTGRES_DB: banquet_crm
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U banquet -d banquet_crm']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: banquet-crm-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@banquet.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - '5050:80'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: banquet-crm-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://banquet:banquet_secret@postgres:5432/banquet_crm?schema=public
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ../banquet-manager
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3000
+        VITE_LEAD_API_KEY: ${VITE_LEAD_API_KEY:-}
+        VITE_WHATSAPP_NUMBER: ${VITE_WHATSAPP_NUMBER:-919930413300}
+    container_name: banquet-crm-web
+    restart: unless-stopped
+    ports:
+      - '8080:80'
+    depends_on:
+      - api
+
+  web-dev:
+    profiles:
+      - dev
+    build:
+      context: ../banquet-manager
+      dockerfile: Dockerfile.dev
+    container_name: banquet-crm-web-dev
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: http://localhost:3000
+      VITE_LEAD_API_KEY: ${VITE_LEAD_API_KEY:-}
+      VITE_WHATSAPP_NUMBER: ${VITE_WHATSAPP_NUMBER:-919930413300}
+    ports:
+      - '8080:8080'
+    volumes:
+      - ../banquet-manager:/app
+      - /app/node_modules
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
