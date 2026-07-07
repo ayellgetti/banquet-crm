@@ -1,0 +1,892 @@
+# FULL-STACK PROJECT BUILD INSTRUCTIONS (Generic Template)
+
+Use this document as the single source of truth when designing, scaffolding, or extending any full-stack project. Follow these rules strictly unless the user explicitly overrides them.
+
+Replace all `{PLACEHOLDERS}` with project-specific values provided by the user.
+
+---
+
+# ═══════════════════════════════════════════════════════════════
+# PART A — BACKEND (REST API)
+# ═══════════════════════════════════════════════════════════════
+
+## A1. PROJECT TYPE
+
+Build a **Modular Monolithic REST API** using clean architecture inside a single deployable backend.
+
+- One codebase, one deployment
+- Domain logic split into independent modules
+- Each module follows the same structure and conventions
+- APIs consumed by a separate frontend
+- Goal: production-ready, maintainable, easy to extend
+
+---
+
+## A2. TECHNOLOGY STACK (Default)
+
+| Layer | Technology |
+|-------|------------|
+| Runtime | Node.js 22+ |
+| Language | TypeScript (strict mode) |
+| Framework | Fastify |
+| ORM | Prisma |
+| Database | PostgreSQL |
+| Validation | Zod |
+| Authentication | JWT Access Token + Refresh Token |
+| Password Hashing | bcrypt |
+| Logging | Pino (via Fastify logger) |
+| API Docs | Swagger / OpenAPI at `/docs` |
+| Testing | Vitest |
+| Linting | ESLint |
+| Formatting | Prettier |
+| Package Manager | pnpm |
+
+Adapt stack only when the user specifies otherwise. Keep the same architectural patterns even if technologies change.
+
+---
+
+## A3. FOLDER STRUCTURE
+
+```
+{project-name}-api/
+
+├── prisma/
+│   ├── schema.prisma
+│   ├── migrations/
+│   └── seed.ts
+│
+├── src/
+│   ├── app.ts
+│   ├── server.ts
+│   ├── config/
+│   ├── plugins/
+│   ├── middleware/
+│   ├── utils/
+│   ├── shared/
+│   └── modules/
+│       ├── auth/
+│       ├── users/
+│       └── {domain-module}/    # One folder per business domain
+│
+├── tests/
+├── uploads/                    # Optional
+├── docker-compose.yml
+├── .env.example
+├── package.json
+└── tsconfig.json
+```
+
+---
+
+## A4. MODULE STRUCTURE (Mandatory — Every Module)
+
+```
+{module}/
+├── {module}.controller.ts
+├── {module}.service.ts
+├── {module}.repository.ts
+├── {module}.routes.ts
+├── {module}.schema.ts
+├── {module}.types.ts
+└── {module}.mapper.ts
+```
+
+### Layer Responsibilities
+
+| Layer | Responsibility | Must NOT contain |
+|-------|----------------|------------------|
+| **Routes** | HTTP method, path, auth, OpenAPI schema, wire DI | Business logic |
+| **Controller** | Parse request, call service, return response | Business logic, DB access |
+| **Service** | Business rules, transactions, duplicate checks, calculations | HTTP logic, direct Prisma |
+| **Repository** | Prisma CRUD and queries only | Business logic |
+| **Schema** | Zod schemas for body, params, query | — |
+| **Mapper** | DB model → API response DTO | Business logic |
+| **Types** | Request/response interfaces | — |
+
+---
+
+## A5. REQUEST FLOW
+
+```
+HTTP Request → Routes → Controller → Zod Validation → Service → Repository → Prisma → DB → Mapper → Response
+```
+
+Never skip layers. Never put business logic in controllers or repositories.
+
+---
+
+## A6. DEPENDENCY INJECTION
+
+Wire in routes file:
+
+```typescript
+const repository = new ModuleRepository(app.prisma);
+const service = new ModuleService(repository);
+const controller = new ModuleController(service);
+```
+
+Use constructor injection. Pass `app.prisma` from the Prisma plugin.
+
+---
+
+## A7. API RESPONSE FORMAT
+
+### Success
+```json
+{ "success": true, "data": {} }
+```
+
+### Error
+```json
+{ "success": false, "message": "Human-readable error message" }
+```
+
+### Validation Error
+```json
+{ "success": false, "message": "Validation failed", "errors": ["field: detail"] }
+```
+
+Use shared helpers: `successResponse(data)`, `errorResponse(message, errors?)`.
+
+Return `201` on create. Use 400, 401, 403, 404, 409, 500 appropriately.
+
+---
+
+## A8. ERROR HANDLING
+
+- Centralized error handler plugin
+- Throw `AppError` from services: `message`, `statusCode`, optional `errors[]`
+- `ZodError` → 400 with field errors
+- Prisma `P2002` → 409, `P2025` → 404
+- Never expose stack traces in production
+- Never log passwords or tokens (use logger redact)
+
+---
+
+## A9. VALIDATION (Zod)
+
+- Validate every endpoint: `body`, `params`, `query`
+- Never trust client input
+- Schemas in `<module>.schema.ts`
+- Types via `z.infer<typeof schema>`
+- Parse in controller: `schema.parse(request.body)`
+
+### Pagination (all list endpoints)
+
+Query: `?page=1&limit=20&search=&sortBy=&order=asc`
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "items": [],
+    "meta": { "page": 1, "limit": 20, "total": 0, "totalPages": 0 }
+  }
+}
+```
+
+Defaults: `page=1`, `limit=20`, `order=asc`, max `limit=100`.
+
+---
+
+## A10. AUTHENTICATION & AUTHORIZATION
+
+### JWT
+- Access token: short-lived (e.g. 15 minutes)
+- Refresh token: long-lived (e.g. 30 days), stored hashed in DB
+- Payload: `{ id, ...userClaims, role }`
+- Hash passwords with bcrypt
+
+### Auth Endpoints
+```
+POST /auth/login     → access + refresh tokens + user profile
+POST /auth/refresh   → new access + rotated refresh token
+POST /auth/logout    → revoke refresh token
+```
+
+### Protection
+- `authenticate` middleware on protected routes
+- Role-based guards (e.g. `requireRole('ADMIN')`) per route
+- `preHandler: [authenticate]` in route definitions
+- Document bearer auth in OpenAPI
+
+Define roles per project: `{ROLE_1}`, `{ROLE_2}`, etc.
+
+---
+
+## A11. DATABASE & PRISMA
+
+- PostgreSQL
+- All changes via Prisma migrations
+- Avoid raw SQL unless necessary
+- Use transactions for multi-step operations
+- Seed: admin user, lookup data, sample records
+- Serialize BigInt IDs as strings in responses
+
+```bash
+pnpm prisma migrate dev
+pnpm prisma generate
+pnpm prisma db seed
+```
+
+---
+
+## A12. REST API CONVENTIONS
+
+### Standard CRUD
+```
+GET    /{resources}          # List (paginated, searchable)
+GET    /{resources}/:id      # Get one
+POST   /{resources}          # Create
+PATCH  /{resources}/:id      # Partial update
+DELETE /{resources}/:id      # Delete
+```
+
+### Naming
+- Plural, kebab-case paths: `/order-items`, `/user-profiles`
+- `PATCH` for partial updates, not `PUT`
+- Shared `parseIdParam()` for numeric IDs
+
+### Utility Endpoints
+```
+GET /health       → { success: true, data: { status: "ok" } }
+GET /docs         → Swagger UI
+GET /docs/json    → OpenAPI JSON
+```
+
+### Custom Actions (when needed)
+```
+POST /{resources}/:id/{action}    # e.g. approve, publish, archive
+GET  /{resources}/{view}          # e.g. calendar, summary, report
+```
+
+---
+
+## A13. OPENAPI / SWAGGER
+
+- Auto-generate from route schemas
+- Every route: `tags`, `summary`, `response`
+- Protected routes: `security: bearerAuth`
+- Shared helpers: `okResponse()`, `createdResponse()`, `idParam`, `paginationQuery`, `ApiTags`
+
+---
+
+## A14. LOGGING
+
+Log: requests, errors, DB errors, auth failures.
+
+Never log: passwords, tokens, sensitive PII.
+
+Redact: `['req.headers.authorization', 'body.password', 'body.refreshToken']`
+
+---
+
+## A15. ENVIRONMENT VARIABLES (Backend)
+
+```
+PORT=3000
+NODE_ENV=development
+DATABASE_URL=postgresql://...
+JWT_SECRET=
+JWT_REFRESH_SECRET=
+ACCESS_TOKEN_EXPIRES=15m
+REFRESH_TOKEN_EXPIRES=30d
+UPLOAD_PATH=uploads
+TZ={timezone}
+```
+
+Validate in `config/env.ts` with Zod. Provide `.env.example`.
+
+---
+
+## A16. DOCKER
+
+`docker-compose.yml`:
+- PostgreSQL
+- pgAdmin (optional, dev)
+- API service (optional)
+
+```bash
+docker compose up
+```
+
+---
+
+## A17. BACKEND CODE STYLE
+
+- Strict TypeScript — no `any`
+- `async/await` only
+- ESM (`"type": "module"`), `.js` extensions in imports
+- Small focused functions
+- Interfaces for contracts; DTOs for request/response
+- Reuse shared utilities
+- Match existing codebase patterns
+
+---
+
+## A18. BACKEND TESTING
+
+- Vitest for API/integration tests
+- One file per module: `tests/{module}.test.ts`
+- Test: auth, CRUD, validation, not-found, conflicts
+- Shared setup: `tests/setup.ts`
+
+---
+
+## A19. BACKEND SCRIPTS
+
+| Script | Purpose |
+|--------|---------|
+| `pnpm dev` | Dev server (watch) |
+| `pnpm build` | Compile TypeScript |
+| `pnpm start` | Run production build |
+| `pnpm test` | Run tests |
+| `pnpm lint` | ESLint |
+| `pnpm prisma:migrate` | Run migrations |
+| `pnpm prisma:seed` | Seed database |
+
+---
+
+## A20. HOW TO ADD A NEW BACKEND MODULE
+
+1. Add Prisma model + migration
+2. Create module folder (7 files)
+3. Repository → Service → Mapper → Controller → Routes
+4. Register routes in `app.ts`
+5. Add seed data if needed
+6. Write tests
+7. Verify Swagger at `/docs`
+8. Add matching frontend feature (Part B)
+
+---
+
+# ═══════════════════════════════════════════════════════════════
+# PART B — FRONTEND (React / Next.js)
+# ═══════════════════════════════════════════════════════════════
+
+## B1. PROJECT TYPE
+
+Build a **Feature-Based Web Application** that consumes the REST API.
+
+- Next.js App Router
+- TypeScript strict mode
+- One `features/` folder per backend module
+- Goal: production-ready UI — fast, consistent, role-aware, easy to extend
+
+---
+
+## B2. TECHNOLOGY STACK (Default)
+
+| Layer | Technology |
+|-------|------------|
+| Framework | Next.js 15+ (App Router) |
+| Language | TypeScript (strict) |
+| Styling | Tailwind CSS |
+| UI Components | shadcn/ui |
+| Icons | Lucide React |
+| Forms | React Hook Form + Zod |
+| Server State | TanStack Query |
+| HTTP Client | Fetch wrapped in custom client |
+| Auth Storage | httpOnly cookies (preferred) or secure storage |
+| Dates | date-fns |
+| Tables | TanStack Table |
+| Toasts | Sonner |
+| Testing | Vitest + React Testing Library |
+| Package Manager | pnpm |
+
+---
+
+## B3. FOLDER STRUCTURE
+
+```
+{project-name}-web/
+
+├── public/
+├── src/
+│   ├── app/
+│   │   ├── (auth)/
+│   │   │   └── login/page.tsx
+│   │   ├── (app)/
+│   │   │   ├── layout.tsx           # App shell (sidebar + header)
+│   │   │   ├── page.tsx             # Dashboard / home
+│   │   │   └── {resource}/
+│   │   │       ├── page.tsx         # List
+│   │   │       ├── new/page.tsx     # Create
+│   │   │       └── [id]/
+│   │   │           ├── page.tsx     # Detail
+│   │   │           └── edit/page.tsx
+│   │   ├── layout.tsx
+│   │   ├── providers.tsx
+│   │   └── globals.css
+│   │
+│   ├── components/
+│   │   ├── ui/                      # shadcn primitives
+│   │   ├── layout/                  # Sidebar, Header, PageHeader
+│   │   ├── shared/                  # DataTable, Pagination, ConfirmDialog
+│   │   └── forms/                   # Reusable form fields
+│   │
+│   ├── features/                    # Mirrors backend modules
+│   │   ├── auth/
+│   │   ├── users/
+│   │   ├── dashboard/
+│   │   └── {domain-module}/
+│   │       ├── api.ts
+│   │       ├── hooks.ts
+│   │       ├── schemas.ts
+│   │       ├── types.ts
+│   │       └── components/
+│   │
+│   ├── lib/
+│   │   ├── api-client.ts
+│   │   ├── auth.ts
+│   │   ├── query-keys.ts
+│   │   └── utils.ts
+│   │
+│   ├── hooks/
+│   ├── types/
+│   └── config/
+│       ├── env.ts
+│       └── navigation.ts
+│
+├── .env.example
+├── next.config.ts
+├── tailwind.config.ts
+└── package.json
+```
+
+---
+
+## B4. FEATURE MODULE STRUCTURE (Mandatory)
+
+```
+features/{feature}/
+├── api.ts           # HTTP calls for this feature
+├── hooks.ts         # TanStack Query hooks
+├── schemas.ts       # Zod form schemas
+├── types.ts         # Types matching backend DTOs
+└── components/      # Feature UI components
+```
+
+### Layer Responsibilities
+
+| Layer | Responsibility | Must NOT contain |
+|-------|----------------|------------------|
+| **Page** | Route, layout, compose components | API calls, business logic |
+| **Hooks** | Fetching, mutations, cache | Direct fetch (use api.ts) |
+| **api.ts** | HTTP calls | UI logic |
+| **schemas.ts** | Form validation | — |
+| **types.ts** | DTOs matching backend | — |
+| **Components** | Presentation, interaction | Direct API calls |
+
+---
+
+## B5. DATA FLOW
+
+```
+User Action → Page/Component → Feature Hook → Feature API → API Client → Backend → Response → Cache/UI Update → Toast
+```
+
+Never call `fetch` in components. Always: `api.ts` → `api-client.ts`.
+
+---
+
+## B6. API CLIENT
+
+### Shared Types
+```typescript
+interface ApiSuccess<T> { success: true; data: T; }
+interface ApiError { success: false; message: string; errors?: string[]; }
+interface PaginatedData<T> { items: T[]; meta: PaginationMeta; }
+```
+
+### Rules
+- Base URL from `NEXT_PUBLIC_API_URL`
+- Attach `Authorization: Bearer <token>` on protected requests
+- On 401: refresh token once, retry request
+- Refresh fails → clear auth, redirect to `/login`
+- Throw typed errors with `message`, `status`, `errors[]`
+
+---
+
+## B7. AUTHENTICATION (Frontend)
+
+### Login
+1. Submit credentials → `POST /auth/login`
+2. Store tokens + user profile
+3. Redirect to home/dashboard
+
+### Refresh
+- On 401 or before expiry → `POST /auth/refresh`
+- Rotate both tokens; queue concurrent requests during refresh
+
+### Logout
+1. `POST /auth/logout`
+2. Clear storage
+3. Redirect to `/login`
+
+### Auth Provider
+```typescript
+{ user, isAuthenticated, isLoading, login(), logout() }
+```
+
+### Route Protection
+- `(app)` group requires auth
+- Unauthenticated → `/login`
+- Authenticated on `/login` → redirect home
+
+### Role-Based UI
+- Hide nav items and actions user cannot access
+- Frontend guards are UX only — backend always enforces auth
+
+---
+
+## B8. FORMS & VALIDATION
+
+- React Hook Form + Zod resolver
+- Schemas in `features/{feature}/schemas.ts`
+- Mirror backend validation rules
+- Show Zod errors + API `errors[]` on fields
+- Disable submit while pending
+- Toast on success; redirect to list or detail
+
+---
+
+## B9. LIST PAGES (Standard Pattern)
+
+Every list page MUST have:
+
+| Feature | Implementation |
+|---------|----------------|
+| Data table | TanStack Table, sortable columns |
+| Pagination | Controls from `meta.totalPages` |
+| Search | Debounced input → `?search=` |
+| Page size | Select (10, 20, 50) |
+| Loading | Skeleton or spinner |
+| Empty | Message + create CTA |
+| Error | Message + retry |
+| Actions | View, Edit, Delete (confirm dialog) |
+| Create | "Add New" → `/{resource}/new` |
+
+```typescript
+const [page, setPage] = useState(1);
+const [limit, setLimit] = useState(20);
+const [search, setSearch] = useState('');
+const debouncedSearch = useDebounce(search, 300);
+const { data, isLoading, error } = useResources({ page, limit, search: debouncedSearch });
+```
+
+---
+
+## B10. DETAIL, CREATE & EDIT PAGES
+
+| Page | Behavior |
+|------|----------|
+| **Detail** `/{resource}/[id]` | Fetch by ID, card layout, Edit/Delete/Back actions, related records if applicable |
+| **Create** `/{resource}/new` | Empty form, POST on submit, toast + redirect |
+| **Edit** `/{resource}/[id]/edit` | Pre-filled form, PATCH on submit, toast + redirect |
+
+---
+
+## B11. DASHBOARD PAGE
+
+If the project has a dashboard endpoint (`GET /dashboard`):
+
+- Display KPI summary cards from API response
+- Responsive grid (2–4 columns)
+- Each card links to relevant module
+- Loading skeletons while fetching
+
+Define KPIs per project based on domain requirements.
+
+---
+
+## B12. CUSTOM ACTION & VIEW PATTERNS
+
+For non-CRUD features, follow these UI patterns:
+
+| Pattern | Example |
+|---------|---------|
+| **Action button + dialog** | Approve, publish, archive → `POST /{resource}/:id/{action}` |
+| **Tabbed views** | All / Active / Archived → different query params or endpoints |
+| **Calendar view** | `GET /{resource}/calendar?from=&to=` → month/week grid |
+| **Report view** | Date range filter + summary + table |
+| **Nested relations** | Detail page shows related records with links |
+
+---
+
+## B13. LAYOUT & NAVIGATION
+
+### App Shell
+```
+┌─────────────────────────────────────────────┐
+│ Header: App name | User menu (logout)       │
+├──────────┬──────────────────────────────────┤
+│ Sidebar  │  Page title + actions            │
+│          │  ─────────────────────────────   │
+│ {nav}    │  Page content                    │
+│ items    │                                  │
+└──────────┴──────────────────────────────────┘
+```
+
+### Navigation Config (`config/navigation.ts`)
+```typescript
+{
+  label: '{Module Label}',
+  href: '/{resource}',
+  icon: IconComponent,
+  roles: ['{ROLE_1}', '{ROLE_2}'],
+}
+```
+
+- Active route highlighted
+- Collapsible sidebar on mobile
+- Breadcrumbs on detail/edit pages
+
+---
+
+## B14. UI COMPONENTS
+
+Use shadcn/ui: Button, Input, Textarea, Select, Combobox, Table, Dialog, Sheet, Card, Badge, Tabs, Calendar, Sonner, Skeleton, DropdownMenu.
+
+### Status Badges
+Use consistent colors across the app:
+
+| Semantic | Color |
+|----------|-------|
+| Draft / Pending | Blue or Gray |
+| Active / In Progress | Yellow |
+| Completed / Success | Green |
+| Failed / Cancelled | Red |
+| Warning / Overdue | Orange |
+
+---
+
+## B15. ERROR HANDLING (Frontend)
+
+- Global error boundary
+- API errors → toast with `message`
+- Validation → map `errors[]` to form fields
+- 401 → refresh or redirect login
+- 403 → permission denied message
+- 404 → not found page
+- Network error → retry option
+
+---
+
+## B16. ENVIRONMENT VARIABLES (Frontend)
+
+```
+NEXT_PUBLIC_API_URL=http://localhost:{API_PORT}
+NEXT_PUBLIC_APP_NAME={PROJECT_NAME}
+```
+
+Validate with Zod. Never put secrets in `NEXT_PUBLIC_*`.
+
+---
+
+## B17. FRONTEND CODE STYLE
+
+- Strict TypeScript — no `any`
+- Functional components
+- `'use client'` only when needed
+- Named exports for components; default export for pages only
+- Co-locate feature code in `features/`
+- `cn()` for conditional classes
+- Format dates/currency with `Intl` or date-fns
+- Mobile-first responsive design
+
+---
+
+## B18. FRONTEND TESTING
+
+- Vitest + React Testing Library
+- Test hooks (mocked API), forms, auth flow, list states
+
+---
+
+## B19. FRONTEND SCRIPTS
+
+| Script | Purpose |
+|--------|---------|
+| `pnpm dev` | Dev server |
+| `pnpm build` | Production build |
+| `pnpm start` | Run production |
+| `pnpm lint` | ESLint |
+| `pnpm test` | Tests |
+
+---
+
+## B20. HOW TO ADD A NEW FRONTEND FEATURE
+
+1. Create `features/{module}/` (api, hooks, schemas, types, components)
+2. Types must match backend DTOs exactly
+3. API functions: list, getById, create, update, delete (+ custom actions)
+4. TanStack Query hooks with query key factory
+5. Pages: list, new, detail, edit under `app/(app)/{resource}/`
+6. Add nav item with role guard
+7. Build table + form components
+8. Write tests
+9. Verify against live API
+
+---
+
+## B21. FRONTEND — WHAT NOT TO DO
+
+- No direct `fetch` in components
+- No mismatched types vs backend
+- No insecure token storage
+- No missing loading/empty/error states
+- No hardcoded API URLs
+- No business logic in components
+- No inconsistent UI across modules
+- No frontend-only auth (backend must enforce)
+- No pages without backend endpoints
+
+---
+
+# ═══════════════════════════════════════════════════════════════
+# PART C — FULL-STACK INTEGRATION
+# ═══════════════════════════════════════════════════════════════
+
+## C1. REPO STRUCTURE
+
+### Monorepo (Recommended)
+```
+{project}/
+├── apps/
+│   ├── api/
+│   └── web/
+├── packages/
+│   └── shared/        # Shared types, enums, schemas (optional)
+├── docker-compose.yml
+└── pnpm-workspace.yaml
+```
+
+### Separate Repos
+- `{project}-api` and `{project}-web`
+- Share types via package or OpenAPI codegen
+
+---
+
+## C2. NAMING ALIGNMENT
+
+Backend and frontend names MUST match:
+
+| Backend | Frontend | Route |
+|---------|----------|-------|
+| `modules/{name}/` | `features/{name}/` | `/{name}` |
+| `modules/auth/` | `features/auth/` | `/login` |
+| `modules/dashboard/` | `features/dashboard/` | `/` |
+
+---
+
+## C3. TYPE SHARING
+
+Frontend types must match backend DTOs field-for-field.
+
+Preferred: `packages/shared/types/` in monorepo.
+
+```typescript
+// packages/shared/types/{resource}.ts — used by both api and web
+export interface ResourceResponse {
+  id: string;
+  // ...same fields as backend mapper output
+}
+```
+
+---
+
+## C4. LOCAL DEVELOPMENT
+
+```bash
+# Database
+docker compose up postgres -d
+
+# Backend
+cd apps/api && cp .env.example .env && pnpm install
+pnpm prisma migrate deploy && pnpm prisma:seed && pnpm dev
+
+# Frontend
+cd apps/web && cp .env.example .env && pnpm install && pnpm dev
+```
+
+| Service | URL |
+|---------|-----|
+| Frontend | `http://localhost:{WEB_PORT}` |
+| API | `http://localhost:{API_PORT}` |
+| Swagger | `http://localhost:{API_PORT}/docs` |
+
+Seed credentials defined per project in README.
+
+---
+
+## C5. DELIVERABLE CHECKLIST
+
+### Backend
+- [ ] 7-file module structure
+- [ ] Consistent `{ success, data/message }` responses
+- [ ] Zod validation on all endpoints
+- [ ] Auth + roles on protected routes
+- [ ] Migrations + seed work
+- [ ] Swagger at `/docs`
+- [ ] Tests pass
+
+### Frontend
+- [ ] Features mirror backend modules
+- [ ] API client with token refresh
+- [ ] Login/logout works
+- [ ] List pages: pagination, search, all states
+- [ ] Forms with Zod validation
+- [ ] Role-based nav and actions
+- [ ] Responsive layout
+- [ ] Tests pass
+
+### Integration
+- [ ] Env vars connect frontend to API
+- [ ] Full CRUD works end-to-end
+- [ ] Token refresh seamless
+- [ ] API errors display in UI
+- [ ] README covers setup for both apps
+
+---
+
+## C6. PROJECT PLACEHOLDERS
+
+Fill these when starting a new project:
+
+| Placeholder | Description | Example |
+|-------------|-------------|---------|
+| `{PROJECT_NAME}` | Application name | Inventory Manager |
+| `{DOMAIN_MODULES}` | Business modules | products, orders, suppliers |
+| `{ROLES}` | User roles | ADMIN, MANAGER, STAFF |
+| `{API_PORT}` | Backend port | 3000 |
+| `{WEB_PORT}` | Frontend port | 3001 |
+| `{LOGIN_FIELD}` | Login identifier | email or username |
+| `{SEED_ADMIN}` | Default admin credentials | Defined in seed |
+| `{TIMEZONE}` | App timezone | UTC |
+| `{CURRENCY}` | Display currency | USD |
+
+---
+
+## C7. INSTRUCTION FOR AI
+
+When building any project with this template:
+
+1. Ask for or infer `{PROJECT_NAME}`, `{DOMAIN_MODULES}`, `{ROLES}` if not provided
+2. Read existing code before changing anything
+3. Keep backend module and frontend feature names identical
+4. Implement full vertical slices: DB → API → UI → tests
+5. Backend and frontend types must match exactly
+6. Prefer small focused diffs
+7. Do not add unrequested features
+8. Do not break established patterns
+
+### Per-feature workflow
+1. Prisma model + migration
+2. Backend module (7 files)
+3. Frontend feature (api, hooks, schemas, types, components, pages)
+4. Navigation + tests
+5. Verify end-to-end
+
+This is a generic architecture template. Apply domain-specific business rules only as defined by the user for each project.
