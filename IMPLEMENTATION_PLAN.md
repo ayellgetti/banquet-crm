@@ -561,7 +561,7 @@ dob: 1990-01-01
 
 ### 11.2 Vendor categories
 
-Decoration, Photography, DJ, Catering, Florist, Sound System, Lighting, Security, Housekeeping
+Decoration, Photography, DJ, Catering, Florist, Sound System, Lighting, Security, Housekeeping, Water Supplier
 
 ### 11.3 Sample data
 

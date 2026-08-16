@@ -81,6 +81,11 @@ enum InventoryOrderStatus {
   CANCELLED
 }
 
+enum DirectoryContactType {
+  EMPLOYEE
+  OTHER
+}
+
 enum InventoryTransactionType {
   PURCHASE
   RENT
@@ -421,4 +426,19 @@ model InventoryOrderLine {
 
   @@index([orderId], map: "idx_inventory_order_line_order")
   @@map("inventory_order_lines")
+}
+
+model DirectoryContact {
+  id        BigInt               @id @default(autoincrement())
+  type      DirectoryContactType
+  name      String               @db.VarChar(255)
+  mobile    String?              @db.VarChar(20)
+  email     String?              @db.VarChar(255)
+  address   String?
+  notes     String?
+  createdAt DateTime             @default(now()) @map("created_at")
+  updatedAt DateTime             @updatedAt @map("updated_at")
+
+  @@index([type], map: "idx_directory_contact_type")
+  @@map("directory_contacts")
 }

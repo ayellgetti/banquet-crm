@@ -24,6 +24,7 @@ export default fp(async (app) => {
         { name: 'Auth', description: 'Authentication' },
         { name: 'Users', description: 'Staff user management' },
         { name: 'Customers', description: 'Customer CRM' },
+        { name: 'Contacts', description: 'Directory contacts (employee / other)' },
         { name: 'Enquiries', description: 'Lead enquiries' },
         { name: 'Events', description: 'Banquet events' },
         { name: 'Follow-ups', description: 'Sales follow-ups' },

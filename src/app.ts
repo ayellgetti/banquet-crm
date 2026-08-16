@@ -16,6 +16,7 @@ import { inventoryRoutes } from './modules/inventory/inventory.routes.js';
 import { paymentRoutes } from './modules/payments/payment.routes.js';
 import { userRoutes } from './modules/users/user.routes.js';
 import { vendorRoutes } from './modules/vendors/vendor.routes.js';
+import { directoryContactRoutes } from './modules/directory-contacts/directory-contact.routes.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import prismaPlugin from './plugins/prisma.js';
 import swaggerPlugin from './plugins/swagger.js';
@@ -69,6 +70,7 @@ export async function buildApp() {
   await app.register(paymentRoutes, { prefix: '/payments' });
   await app.register(invoiceRoutes, { prefix: '/invoices' });
   await app.register(vendorRoutes, { prefix: '/vendors' });
+  await app.register(directoryContactRoutes, { prefix: '/directory-contacts' });
   await app.register(inventoryRoutes, { prefix: '/inventory' });
   await app.register(inventoryOrderRoutes, { prefix: '/inventory-orders' });
   await app.register(dashboardRoutes, { prefix: '/dashboard' });

@@ -2,6 +2,7 @@ export const ApiTags = {
   auth: 'Auth',
   users: 'Users',
   customers: 'Customers',
+  contacts: 'Contacts',
   enquiries: 'Enquiries',
   events: 'Events',
   followups: 'Follow-ups',

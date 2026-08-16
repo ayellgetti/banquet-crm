@@ -14,6 +14,7 @@ const VENDOR_CATEGORIES = [
   'Lighting',
   'Security',
   'Housekeeping',
+  'Water Supplier',
 ];
 
 async function main() {
